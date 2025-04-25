@@ -1,0 +1,31 @@
+# Shell script execution artifacts
+*.log
+*.out
+*.tmp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Common archive files (often temporary)
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.tar.zst
+
+# IDE / Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS specific
+*.AppleDouble
