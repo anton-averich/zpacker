@@ -469,16 +469,14 @@ run_args_tests() {
              "assert_contains Error: Compression level (-q) must be a number between 1 and 22." \
              "assert_contains Usage:"
 
-    run_test "Args: Fail on pack mode required but missing (-i)" \
+    run_test "Args: Show help when only -o provided (no input)" \
              '$SCRIPT_PATH -o some_archive.tar.zst' \
-             1 \
-             "assert_contains Error: Operating mode not specified" \
+             0 \
              "assert_contains Usage:"
 
-    run_test "Args: Fail on unpack mode required but missing (-u)" \
+    run_test "Args: Show help when only -o for unpack provided" \
              '$SCRIPT_PATH -o some_dir' \
-             1 \
-             "assert_contains Error: Operating mode not specified" \
+             0 \
              "assert_contains Usage:"
 
     run_test "Args: Warn on using -q in unpack mode" \

@@ -28,19 +28,48 @@ output_file=""   # Determined in main() for pack mode
 
 # Displays help message
 usage() {
-  echo "zpacker v$VERSION" # Display version
-  echo "Usage:"
-  echo "  Pack:   $0 [OPTIONS] -i <file/folder1> [-i <file/folder2>...] [-o <archive.tar.zst>] [-q <level>] [-f]"
-  echo "  Unpack: $0 -u <archive.tar.zst> [-o <destination_folder>]"
-  echo ""
-  echo "Options:"
-  echo "  -i <input>    : Pack mode. Specify input file/folder. Use multiple -i for multiple inputs."
-  echo "  -u <archive>  : Unpack mode. Specify the archive file to unpack."
-  echo "  -o <path>     : In pack mode: name of the output archive (default: derived from input or '$DEFAULT_OUTPUT_FILE')."
-  echo "                  In unpack mode: folder to extract files into (default: current dir '$DEFAULT_OUTPUT_DIR')."
-  echo "  -q <level>    : zstd compression level (1-22, default: $DEFAULT_COMPRESSION_LEVEL). Levels 20-22 are ultra levels. Used only for packing."
-  echo "  -f            : Force overwrite of the output file if it exists (pack mode only)."
-  echo "  -h            : Show this help message."
+  echo "zpacker v$VERSION"
+
+  cat <<EOF
+
+Smart archiving tool: automatically detects mode by file extension.
+
+Usage:
+  Pack:   zpacker [OPTIONS] <file/folder1> [<file/folder2>...]
+          or: zpacker -i <input> [-o <archive.tar.zst>] [-q <level>] [-f]
+  Unpack: zpacker [-o <destination_folder>] <archive.tar.zst>
+
+SMART MODE (automatic)
+  The script automatically determines the operation mode based on file extension.
+  If the argument ends with .tar.zst, it unpacks; otherwise, it packs.
+
+  zpacker myfile.txt              → packs to 'myfile.txt.tar.zst'
+  zpacker myfolder/               → packs to 'myfolder.tar.zst'
+  zpacker archive.tar.zst         → unpacks to current directory
+
+OPTIONS (short / long)
+  -i, --input=<path>           : Pack mode. Specify input file/folder. Can be used multiple times.
+  -u, --unpack=<file>          : Unpack mode. Specify the archive file to extract.
+  -o, --output=<dir>           : In pack mode: output archive name (default: derived from input).
+                                 In unpack mode: extraction directory (default: current dir).
+  -q, --level=<n>              : zstd compression level (1-22, default: $DEFAULT_COMPRESSION_LEVEL). Only for packing.
+  -f, --force                  : Force overwrite of output file if exists. Only for packing.
+  -h, --help                   : Show this help message and exit.
+
+EXAMPLES
+  # Pack a single file (auto-detects pack mode)
+  zpacker myfile.txt
+
+  # Pack with custom compression level
+  zpacker -q 15 important_docs/
+
+  # Unpack to specific directory
+  zpacker -o /restore backup.tar.zst
+
+  # Force overwrite existing archive
+  zpacker --force -i src/ -o latest.tar.zst
+
+EOF
 }
 
 # Checks if a command exists in PATH
@@ -289,7 +318,7 @@ unpack_archive() {
 parse_arguments() {
   # Parses command line options using getopts.
   # Sets global variables: mode, input_files, output_target, compression_level, force_overwrite, unpack_archive_name
-  
+
   # Reset global variables for safety (in case function is called multiple times, though not expected here)
   input_files=()
   mode=""
@@ -298,19 +327,50 @@ parse_arguments() {
   force_overwrite=false
   unpack_archive_name=""
 
-  # Ensure OPTIND is reset if getopts is used in a function
-  OPTIND=1 
+  # First pass: convert long options to short ones for easier parsing with getopts
+  local converted_args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --input=*)     converted_args+=("-i"); converted_args+=("${1#--input=}");;
+      --input)       converted_args+=("-i"); converted_args+=("$2"); shift;;
+      --unpack=*)    converted_args+=("-u"); converted_args+=("${1#--unpack=}");;
+      --unpack)      converted_args+=("-u"); converted_args+=("$2"); shift;;
+      --output=*)    converted_args+=("-o"); converted_args+=("${1#--output=}");;
+      --output)      converted_args+=("-o"); converted_args+=("$2"); shift;;
+      --level=*)     converted_args+=("-q"); converted_args+=("${1#--level=}");;
+      --level)       converted_args+=("-q"); converted_args+=("$2"); shift;;
+      --force)       converted_args+=("-f");;
+      --help)        converted_args+=("-h");;
+      -i:| -u:| -o:| -q:)
+        # Handle cases like "-i:" (colon after flag without space)
+        local flag="${1%%:*}"
+        local value="${1#*:}"
+        case "$flag" in
+          -i) converted_args+=("-i"); converted_args+=("$value");;
+          -u) converted_args+=("-u"); converted_args+=("$value");;
+          -o) converted_args+=("-o"); converted_args+=("$value");;
+          -q) converted_args+=("-q"); converted_args+=("$value");;
+        esac;;
+      --*)           echo "Error: Unknown long option: $1" >&2; usage; exit 1;;
+      *)             converted_args+=("$1");;
+    esac
+    shift
+  done
 
-  while getopts ":i:u:o:q:hf" opt; do
+  # Now process with getopts using the converted arguments
+  set -- "${converted_args[@]}"
+  OPTIND=1
+
+  while getopts ":i:u:o:q:fh" opt; do
     case ${opt} in
-      i )
+      i)
         if [ "$mode" == "unpack" ]; then
             echo "Error: Cannot use -i (pack) and -u (unpack) simultaneously." >&2; usage; exit 1
         fi
         mode="pack"
-        input_files+=("$OPTARG") 
+        input_files+=("$OPTARG")
         ;;
-      u )
+      u)
         if [ "$mode" == "pack" ]; then
           echo "Error: Cannot use -i (pack) and -u (unpack) simultaneously." >&2; usage; exit 1
         fi
@@ -320,13 +380,13 @@ parse_arguments() {
         mode="unpack"
         unpack_archive_name="$OPTARG"
         ;;
-      o )
+      o)
         if [ -n "$output_target" ]; then
             echo "Error: Cannot specify multiple output targets with -o." >&2; usage; exit 1
         fi
         output_target="$OPTARG"
         ;;
-      q )
+      q)
         if [[ "$compression_level" != "$DEFAULT_COMPRESSION_LEVEL" && "$compression_level" != "$OPTARG" ]]; then
            echo "Error: Cannot specify multiple compression levels with -q." >&2; usage; exit 1
         fi
@@ -335,25 +395,64 @@ parse_arguments() {
            echo "Error: Compression level (-q) must be a number between 1 and 22." >&2; usage; exit 1
         fi
         ;;
-      f )
-        force_overwrite=true
-        ;;
-      h )
-        usage
-        exit 0 
-        ;;
-      \? )
+      f) force_overwrite=true;;
+      h) usage; exit 0;;
+      \?)
         echo "Error: Invalid option: -$OPTARG" >&2; usage; exit 1
         ;;
-      : )
+      :)
         echo "Error: Option -$OPTARG requires an argument." >&2; usage; exit 1
         ;;
     esac
   done
-  shift $((OPTIND -1)) 
 
-  # Check for any remaining non-option arguments after processing options
-  if [ $# -gt 0 ]; then
+  shift $((OPTIND -1))
+
+  # If no explicit mode was set via flags, detect from file extension
+  if [ -z "$mode" ]; then
+    if [ $# -gt 0 ]; then
+      local first_arg="$1"
+      if [[ "$first_arg" == *.tar.zst ]]; then
+        mode="unpack"
+        unpack_archive_name="$first_arg"
+        shift
+      else
+        mode="pack"
+        input_files=("$first_arg")
+        shift
+      fi
+
+      # Process remaining arguments as additional inputs (pack) or flags
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          -i|-u|-o|-q|-f)
+            echo "Error: Cannot mix implicit mode with explicit flags (-i/-u)." >&2
+            usage
+            exit 1
+            ;;
+          -*)
+            echo "Error: Invalid option after implicit mode: $1" >&2
+            usage
+            exit 1
+            ;;
+          *)
+            # Additional input file/folder for pack mode
+            if [ "$mode" = "unpack" ]; then
+              echo "Error: Cannot specify multiple files in unpack mode." >&2
+              usage
+              exit 1
+            fi
+            input_files+=("$1")
+            ;;
+        esac
+        shift
+      done
+    else
+      # No arguments at all - show help
+      usage
+      exit 0
+    fi
+  elif [ $# -gt 0 ]; then
       if [ "$mode" == "pack" ]; then
           echo "Error: Unexpected arguments found after options: $@" >&2
           echo "Please specify all input files/folders using the -i option." >&2
@@ -368,17 +467,9 @@ parse_arguments() {
 }
 
 main() {
-  # Handle the case of no arguments or only -h (which exits in parse_arguments)
-  # OPTIND is global and retains its value after getopts
-  # $# reflects the number of non-option arguments remaining after shift in parse_arguments
-  if [ $OPTIND -eq 1 ] && [ $# -eq 0 ]; then 
-      usage
-      exit 0
-  fi
-
-  # Check if an operating mode was specified
+  # Mode should be set by now (either explicit flags or auto-detected)
   if [ -z "$mode" ]; then
-      echo "Error: Operating mode not specified (-i for pack or -u for unpack)." >&2
+      echo "Error: Could not determine operation mode." >&2
       usage
       exit 1
   fi
